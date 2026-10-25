@@ -138,6 +138,10 @@ SecureHotkey protects **credentials stored on disk**, but it does **not** make a
 
 A small, practical utility built with **PowerShell and AutoHotkey v2**. The current version has not been verified on every Windows/application configuration; feedback and improvements are welcome.
 
-## License
+## ## License
 
-No license has been specified yet. Add a `LICENSE` file before inviting public reuse or contributions.
+SecureHotkey is open-source software licensed under the [MIT License](LICENSE).
+
+You are free to use, modify, and distribute this software, including for commercial purposes, provided that the original copyright and license notice are preserved.
+
+See the [LICENSE](LICENSE) file for details.
