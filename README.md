@@ -15,7 +15,7 @@ SecureHotkey is a lightweight, Windows-only PowerShell tool for managing login p
 - 🧩 **Custom Auto-Type sequences:** Configure tabs, Enter presses, and delays.
 - 🛠️ **Interactive manager:** Add, edit, enable/disable, list, or delete profiles.
 - 🚀 **Windows startup integration:** Install a shortcut for the central launcher.
-- 📁 **Single installation directory:** `C:\tools\SecureHotkey`.
+- 📁 **Single installation directory:** `C:\tools\SecureHotkey\`.
 
 ## Requirements
 
@@ -27,18 +27,18 @@ SecureHotkey is a lightweight, Windows-only PowerShell tool for managing login p
 
 1. Install **AutoHotkey v2**.
 2. Download or clone this repository.
-3. Open PowerShell in the folder containing `manager.ps1`.
-4. Run:
+3. Double-click **`SecureHotkey.cmd`** to open the interactive manager.
+4. Select **1 — Add profile** and enter your profile name, username, target window title, shortcut, typing sequence, and password (entered through a hidden prompt).
+5. Select **5 — Install Windows startup** to install a shortcut and start the launcher, or **6 — Start / reload launcher** to start it without configuring startup.
+6. Focus the username field in the target application and press your configured hotkey.
 
-   ```powershell
-   powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\manager.ps1
-   ```
+You can also start the manager from PowerShell in the project folder:
 
-5. Select **1 — Add profile** and enter your profile name, username, target window title, shortcut, typing sequence, and password (entered through a hidden prompt).
-6. Select **5 — Install Windows startup** to install a shortcut and start the launcher, or **6 — Start / reload launcher** to start it without configuring startup.
-7. Focus the username field in the target application and press your configured hotkey.
+```powershell
+.\SecureHotkey.cmd
+```
 
-The manager creates and maintains its files in `C:\tools\SecureHotkey`, even if you run `manager.ps1` from somewhere else. Run it as your **normal Windows user**, not as Administrator.
+The manager creates and maintains its files in `C:\tools\SecureHotkey\`, even if you launch it from somewhere else. Run it as your **normal Windows user**, not as Administrator.
 
 ## Example: Sophos Connect
 
@@ -91,7 +91,7 @@ Window titles are matched **case-insensitively by substring**, so choose a suffi
 
 ## Managing profiles
 
-Launch `C:\tools\SecureHotkey\manager.ps1` to access:
+Launch `SecureHotkey.cmd` to access:
 
 | Menu | Action |
 | --- | --- |
@@ -105,11 +105,13 @@ Launch `C:\tools\SecureHotkey\manager.ps1` to access:
 
 After changing profiles, reload the launcher to apply your updates.
 
-## Generated files
+## Files and installation directory
+
+Use `SecureHotkey.cmd` to start the PowerShell manager, `SecureHotkey.ps1`. The manager maintains the following files in its installation directory:
 
 ```text
 C:\tools\SecureHotkey\
-├── manager.ps1       # Interactive profile manager
+├── SecureHotkey.ps1  # Interactive profile manager
 ├── launcher.ahk      # Single generated AutoHotkey v2 launcher
 ├── decrypt.ps1       # Decrypts a credential on demand
 ├── profiles.json     # Profile settings (no plaintext passwords)
@@ -138,7 +140,7 @@ SecureHotkey protects **credentials stored on disk**, but it does **not** make a
 
 A small, practical utility built with **PowerShell and AutoHotkey v2**. The current version has not been verified on every Windows/application configuration; feedback and improvements are welcome.
 
-## ## License
+## License
 
 SecureHotkey is open-source software licensed under the [MIT License](LICENSE).
 
