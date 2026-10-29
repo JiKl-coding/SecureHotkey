@@ -5,7 +5,7 @@
 SecureHotkey is a lightweight, Windows-only PowerShell tool for managing login profiles and generating **one central [AutoHotkey v2](https://www.autohotkey.com/) launcher**. Press a keyboard shortcut in the right application window to enter your username and password automatically—without storing your password as plain text in an `.ahk` file.
 
 > [!IMPORTANT]
-> SecureHotkey is **not affiliated with AutoHotkey**. It is a companion tool that **requires AutoHotkey v2** to run generated hotkeys.
+> SecureHotkey is **not affiliated with AutoHotkey**. The release package bundles an unmodified portable copy of AutoHotkey v2, so no AutoHotkey installation is required.
 
 ## Features
 
@@ -19,18 +19,17 @@ SecureHotkey is a lightweight, Windows-only PowerShell tool for managing login p
 
 ## Requirements
 
-- Windows 10 or 11
-- [AutoHotkey v2](https://www.autohotkey.com/)
+- Windows 10 or 11 (x64)
 - Windows PowerShell 5.1 or newer
+- [AutoHotkey v2](https://www.autohotkey.com/) only when running from a repository clone; the release package includes it
 
 ## Quick start
 
-1. Install **AutoHotkey v2**.
-2. Download or clone this repository.
-3. Double-click **`SecureHotkey.cmd`** to open the interactive manager.
-4. Select **1 — Add profile** and enter your profile name, username, target window title, shortcut, typing sequence, and password (entered through a hidden prompt).
-5. Select **5 — Install Windows startup** to install a shortcut and start the launcher, or **6 — Start / reload launcher** to start it without configuring startup.
-6. Focus the username field in the target application and press your configured hotkey.
+1. Download `SecureHotkey-<version>.zip` from [Releases](../../releases) and extract it anywhere.
+2. Double-click **`SecureHotkey.cmd`** to open the interactive manager.
+3. Select **1 — Add profile** and enter your profile name, username, target window title, shortcut, typing sequence, and password (entered through a hidden prompt).
+4. Select **5 — Install Windows startup** to install a shortcut and start the launcher, or **6 — Start / reload launcher** to start it without configuring startup.
+5. Focus the username field in the target application and press your configured hotkey.
 
 You can also start the manager from PowerShell in the project folder:
 
@@ -38,7 +37,9 @@ You can also start the manager from PowerShell in the project folder:
 .\SecureHotkey.cmd
 ```
 
-The manager creates and maintains its files in `C:\tools\SecureHotkey\`, even if you launch it from somewhere else. Run it as your **normal Windows user**, not as Administrator.
+The manager creates and maintains its files in `C:\tools\SecureHotkey\`, even if you launch it from somewhere else, and copies the bundled `AutoHotkey64.exe` there. Run it as your **normal Windows user**, not as Administrator.
+
+To upgrade, exit the running launcher (tray icon → Exit), extract the new release, and run `SecureHotkey.cmd` again.
 
 ## Example: Sophos Connect
 
@@ -112,6 +113,8 @@ Use `SecureHotkey.cmd` to start the PowerShell manager, `SecureHotkey.ps1`. The 
 ```text
 C:\tools\SecureHotkey\
 ├── manager.ps1       # Copy of the interactive profile manager
+├── AutoHotkey64.exe  # Bundled portable AutoHotkey v2 runtime
+├── AutoHotkey-license.txt
 ├── launcher.ahk      # Single generated AutoHotkey v2 launcher (decrypts on demand)
 ├── profiles.json     # Profile settings (no plaintext passwords)
 └── credentials\
@@ -119,7 +122,11 @@ C:\tools\SecureHotkey\
     └── ...
 ```
 
-Windows startup is handled by a shortcut to `launcher.ahk` in your account's Startup folder (`shell:startup`).
+Windows startup is handled by a shortcut in your account's Startup folder (`shell:startup`) that runs `launcher.ahk` with the bundled `AutoHotkey64.exe`, or with the installed AutoHotkey if no bundled copy is present.
+
+## Building a release
+
+Pushing a tag (e.g. `v2.0.0`) runs the GitHub Actions workflow in `.github/workflows/release.yml`. It downloads the pinned official AutoHotkey v2 portable ZIP, verifies its SHA256 checksum, and publishes `SecureHotkey-<tag>.zip` as a release asset. To update AutoHotkey, change `AHK_VERSION` and `AHK_SHA256` in the workflow (the checksum is listed in the AutoHotkey release notes).
 
 ## Security model and limitations
 
@@ -147,3 +154,5 @@ SecureHotkey is open-source software licensed under the [MIT License](LICENSE).
 You are free to use, modify, and distribute this software, including for commercial purposes, provided that the original copyright and license notice are preserved.
 
 See the [LICENSE](LICENSE) file for details.
+
+The release package bundles [AutoHotkey](https://github.com/AutoHotkey/AutoHotkey) unmodified; it is licensed separately under the GNU GPL v2 (see `ahk/license.txt`).

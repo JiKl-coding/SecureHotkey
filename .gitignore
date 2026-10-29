@@ -8,6 +8,10 @@ credentials/
 launcher.ahk
 decrypt.ps1
 
+# Release build output and locally bundled AutoHotkey
+dist/
+ahk/
+
 # Local configuration/backups
 *.bak
 *.backup

@@ -1,0 +1,65 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*', '[0-9]*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  AHK_VERSION: 2.0.31
+  # Published by AutoHotkey for AutoHotkey_<version>.zip; update together with AHK_VERSION.
+  AHK_SHA256: CA1A595ACA4528755D8D4CD7FED23D497A37BD9A0B6892072612D68DEE1BD00A
+
+jobs:
+  package:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build portable package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $zip = Join-Path $env:RUNNER_TEMP 'ahk.zip'
+          Invoke-WebRequest "https://github.com/AutoHotkey/AutoHotkey/releases/download/v$env:AHK_VERSION/AutoHotkey_$env:AHK_VERSION.zip" -OutFile $zip
+          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash
+          if ($hash -ne $env:AHK_SHA256) { throw "AutoHotkey checksum mismatch: $hash" }
+
+          $ahkDir = Join-Path $env:RUNNER_TEMP 'ahk'
+          Expand-Archive $zip -DestinationPath $ahkDir
+
+          $pkg = 'dist/SecureHotkey'
+          New-Item -ItemType Directory -Path "$pkg/ahk" -Force | Out-Null
+          Copy-Item SecureHotkey.cmd, SecureHotkey.ps1, README.md, LICENSE -Destination $pkg
+          foreach ($name in 'AutoHotkey64.exe', 'license.txt') {
+              $file = Get-ChildItem $ahkDir -Recurse -File -Filter $name | Select-Object -First 1
+              if (!$file) { throw "$name not found in AutoHotkey archive" }
+              Copy-Item $file.FullName -Destination "$pkg/ahk/$name"
+          }
+          Set-Content "$pkg/ahk/README.txt" "AutoHotkey v$env:AHK_VERSION (GPLv2), unmodified. Source: https://github.com/AutoHotkey/AutoHotkey/tree/v$env:AHK_VERSION"
+
+          $tag = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME } else { "dev-$($env:GITHUB_SHA.Substring(0,7))" }
+          Compress-Archive -Path $pkg -DestinationPath "dist/SecureHotkey-$tag.zip"
+          "PACKAGE=dist/SecureHotkey-$tag.zip" >> $env:GITHUB_ENV
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SecureHotkey
+          path: ${{ env.PACKAGE }}
+
+      - name: Publish release
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view $env:GITHUB_REF_NAME *> $null
+          if ($LASTEXITCODE -eq 0) {
+              gh release upload $env:GITHUB_REF_NAME $env:PACKAGE --clobber
+          } else {
+              gh release create $env:GITHUB_REF_NAME $env:PACKAGE --title $env:GITHUB_REF_NAME --generate-notes
+          }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

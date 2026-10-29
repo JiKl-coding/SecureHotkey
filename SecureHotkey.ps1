@@ -4,6 +4,7 @@ $Root = 'C:\tools\SecureHotkey'
 $Store = Join-Path $Root 'credentials'
 $Config = Join-Path $Root 'profiles.json'
 $Launcher = Join-Path $Root 'launcher.ahk'
+$AhkExe = Join-Path $Root 'AutoHotkey64.exe'
 $Startup = Join-Path ([Environment]::GetFolderPath('Startup')) 'SecureHotkey.lnk'
 
 function Escape-Ahk([string]$s) { return '"' + $s.Replace('`','``').Replace('"','`"').Replace("`r",'').Replace("`n",'') + '"' }
@@ -280,18 +281,40 @@ DecryptPassword(id) {
     $lines.Add($runtime)
     [IO.File]::WriteAllText($Launcher, ($lines -join "`r`n"), (New-Object Text.UTF8Encoding($true)))
 }
+function Install-PortableAhk {
+    $source = Join-Path $PSScriptRoot 'ahk'
+    $exe = Join-Path $source 'AutoHotkey64.exe'
+    if (!(Test-Path -LiteralPath $exe)) { return }
+    if ((Test-Path -LiteralPath $AhkExe) -and (Get-FileHash -LiteralPath $exe).Hash -eq (Get-FileHash -LiteralPath $AhkExe).Hash) { return }
+    try {
+        Copy-Item -LiteralPath $exe -Destination $AhkExe -Force
+        Copy-Item -LiteralPath (Join-Path $source 'license.txt') -Destination (Join-Path $Root 'AutoHotkey-license.txt') -Force -ErrorAction SilentlyContinue
+    } catch { Write-Warning "Cannot update bundled AutoHotkey (stop the running launcher first): $($_.Exception.Message)" }
+}
 function Install-Startup {
     $ws = New-Object -ComObject WScript.Shell
     $lnk = $ws.CreateShortcut($Startup)
-    $lnk.TargetPath = $Launcher
+    if (Test-Path -LiteralPath $AhkExe) {
+        $lnk.TargetPath = $AhkExe
+        $lnk.Arguments = "`"$Launcher`""
+    } else {
+        $lnk.TargetPath = $Launcher
+    }
     $lnk.WorkingDirectory = $Root
     $lnk.Description = 'SecureHotkey launcher'
     $lnk.Save()
 }
 function Restart-Launcher {
     if (Confirm 'Start/reload the launcher now?' $true) {
-        try { Start-Process -FilePath $Launcher | Out-Null; Write-Host 'Launcher started.' }
-        catch { Write-Warning "Cannot start AutoHotkey: $($_.Exception.Message)" }
+        try {
+            if (Test-Path -LiteralPath $AhkExe) {
+                Start-Process -FilePath $AhkExe -ArgumentList "`"$Launcher`"" -WorkingDirectory $Root | Out-Null
+            } else {
+                Start-Process -FilePath $Launcher | Out-Null
+            }
+            Write-Host 'Launcher started.'
+        }
+        catch { Write-Warning "Cannot start AutoHotkey (use the release package or install AutoHotkey v2): $($_.Exception.Message)" }
     }
 }
 
@@ -300,6 +323,8 @@ New-Item -ItemType Directory -Path $Store -Force | Out-Null
 if ([IO.Path]::GetFullPath($PSCommandPath) -ine [IO.Path]::GetFullPath((Join-Path $Root 'manager.ps1'))) {
     Copy-Item -LiteralPath $PSCommandPath -Destination (Join-Path $Root 'manager.ps1') -Force
 }
+Install-PortableAhk
+if (Test-Path -LiteralPath $Startup) { Install-Startup }
 # Legacy decrypt.ps1 is no longer used. Leave it untouched to avoid deleting user files.
 $profiles = @(Load-Config)
 if (!(Test-Path $Config)) { Save-Config $profiles }
