@@ -15,7 +15,12 @@ function Load-Config {
     if (!(Test-Path -LiteralPath $Config)) { return @() }
     $raw = Get-Content -LiteralPath $Config -Raw -Encoding UTF8
     if ([string]::IsNullOrWhiteSpace($raw)) { return @() }
-    return (ConvertFrom-Json -InputObject $raw)
+    $items = ConvertFrom-Json -InputObject $raw
+    # Profiles created before v3 have no process property.
+    foreach ($p in $items) {
+        if ($p.PSObject.Properties.Name -notcontains 'process') { $p | Add-Member -NotePropertyName process -NotePropertyValue '' }
+    }
+    return $items
 }
 function Ask([string]$label, [string]$default = '') {
     $suffix = if ($default) { " [$default]" } else { '' }
@@ -56,32 +61,39 @@ function Ask-Shortcut([string]$default) {
         Write-Warning 'Invalid shortcut. At least one modifier is required.'
     }
 }
-function Validate-Sequence([string]$seq) {
-    $remaining = $seq.ToUpperInvariant()
+# A sequence must type exactly the values the profile stores (username and/or password).
+function Validate-Sequence([string]$seq, [bool]$hasUser, [bool]$hasPass) {
+    $seq = $seq.ToUpperInvariant()
+    if ($seq.Length -gt 600) { return $false }
+    $remaining = $seq
     while ($remaining.Length -gt 0) {
         if ($remaining -match '^\{(USERNAME|PASSWORD|ENTER|TAB(?: [1-9][0-9]?)?|DELAY [1-9][0-9]{0,3})\}') {
             $remaining = $remaining.Substring($Matches[0].Length)
         } else { return $false }
     }
-    return ($seq.ToUpperInvariant().Contains('{PASSWORD}') -and $seq.ToUpperInvariant().Contains('{USERNAME}') -and $seq.Length -le 600)
+    return ($seq.Contains('{USERNAME}') -eq $hasUser) -and ($seq.Contains('{PASSWORD}') -eq $hasPass) -and ($hasUser -or $hasPass)
 }
-function Ask-Sequence([string]$default) {
-    $templates = @(
+function Ask-Sequence([string]$default, [bool]$hasUser, [bool]$hasPass) {
+    $templates = if ($hasUser -and $hasPass) { @(
         '{USERNAME}{TAB}{PASSWORD}{ENTER}',
         '{USERNAME}{ENTER}{DELAY 500}{PASSWORD}{ENTER}',
         '{USERNAME}{TAB 3}{PASSWORD}{ENTER}',
         '{USERNAME}{TAB}{PASSWORD}',
         '{USERNAME}{TAB 2}{DELAY 300}{PASSWORD}{ENTER}'
-    )
+    ) } elseif ($hasUser) { @('{USERNAME}{TAB}', '{USERNAME}{ENTER}', '{USERNAME}') }
+    else { @('{PASSWORD}{ENTER}', '{PASSWORD}{TAB}', '{PASSWORD}') }
+    $custom = [string]($templates.Count + 1)
+    $keep = [string]($templates.Count + 2)
+    if ($default -and !(Validate-Sequence $default $hasUser $hasPass)) { $default = '' }
     while ($true) {
         Write-Host "`nSequences:"
         for ($i=0; $i -lt $templates.Count; $i++) { Write-Host " $($i+1)) $($templates[$i])" }
-        Write-Host ' 6) Custom sequence'
-        if ($default) { Write-Host " 7) Keep current: $default" }
-        $choice = Ask 'Choice' $(if($default){'7'}else{'1'})
-        if ($choice -eq '7' -and $default) { return $default }
-        if ($choice -match '^[1-5]$') { return $templates[[int]$choice - 1] }
-        if ($choice -eq '6') {
+        Write-Host " $custom) Custom sequence"
+        if ($default) { Write-Host " $keep) Keep current: $default" }
+        $choice = Ask 'Choice' $(if($default){$keep}else{'1'})
+        if ($choice -eq $keep -and $default) { return $default }
+        if ($choice -match '^\d+$' -and [int]$choice -ge 1 -and [int]$choice -le $templates.Count) { return $templates[[int]$choice - 1] }
+        if ($choice -eq $custom) {
             Write-Host "`nCustom sequence reference:"
             Write-Host ' {USERNAME}   types the username'
             Write-Host ' {PASSWORD}   types the decrypted password'
@@ -89,9 +101,10 @@ function Ask-Sequence([string]$default) {
             Write-Host ' {TAB 3}      presses Tab three times (1-99)'
             Write-Host ' {ENTER}      presses Enter'
             Write-Host ' {DELAY 300}  waits 300 ms (1-9999)'
-            Write-Host ' The sequence must contain both {USERNAME} and {PASSWORD}; no literal text.'
+            $required = @(@(if($hasUser){'{USERNAME}'}) + @(if($hasPass){'{PASSWORD}'})) -join ' and '
+            Write-Host " The sequence must contain $required (and nothing the profile does not store); no literal text."
             $seq = (Read-Host 'Sequence').Trim().ToUpperInvariant()
-            if (Validate-Sequence $seq) { return $seq }
+            if (Validate-Sequence $seq $hasUser $hasPass) { return $seq }
             Write-Warning 'Invalid sequence.'
         }
     }
@@ -104,11 +117,36 @@ function Set-Password([string]$id) {
     [IO.File]::WriteAllText($path, $cipher, (New-Object Text.UTF8Encoding($false)))
     $secret.Dispose()
 }
+function Test-Password([string]$id) { return (Test-Path -LiteralPath (Join-Path $Store "$id.enc")) }
+function Remove-Password([string]$id) {
+    $encPath = Join-Path $Store "$id.enc"
+    if (Test-Path -LiteralPath $encPath) {
+        [IO.File]::WriteAllBytes($encPath, (New-Object byte[] (Get-Item -LiteralPath $encPath).Length))
+        Remove-Item -LiteralPath $encPath
+    }
+}
+function Confirm-AnyWindow {
+    Write-Warning 'Without a window title or process the hotkey types into ANY active window (more specific profiles take precedence).'
+    return (Confirm 'Continue?')
+}
+function Ask-Process([string]$default, [string]$hint) {
+    while ($true) {
+        $v = Ask "Process name, e.g. SophosConnect.exe; see Task Manager > Details ($hint)" $default
+        if (!$v -or $v -eq '-') { return $v }
+        if ($v -match '^[^\\/:*?"<>|]+$') { return $(if ($v -match '\.exe$') { $v } else { "$v.exe" }) }
+        Write-Warning 'Invalid process name.'
+    }
+}
+function Format-Target($p) {
+    $target = @(@($p.window, $p.process) | Where-Object { $_ }) -join ' @ '
+    if ($target) { return $target } else { return '(any window)' }
+}
 function Select-Profile($profiles) {
     if (@($profiles).Count -eq 0) { Write-Warning 'No profiles yet.'; return -1 }
     for ($i=0; $i -lt @($profiles).Count; $i++) {
         $p = $profiles[$i]
-        Write-Host (' {0}) {1} | {2} | {3} | {4}' -f ($i+1), $p.name, $p.window, $p.shortcut, $(if($p.enabled){'enabled'}else{'disabled'}))
+        $fields = @(@(if($p.username){'username'}) + @(if(Test-Password $p.id){'password'})) -join '+'
+        Write-Host (' {0}) {1} | {2} | {3} | {4} | {5}' -f ($i+1), $p.name, (Format-Target $p), (Format-Shortcut $p.shortcut), $fields, $(if($p.enabled){'enabled'}else{'disabled'}))
     }
     $n = Read-Host 'Profile number (Enter = back)'
     if ($n -match '^\d+$' -and [int]$n -ge 1 -and [int]$n -le @($profiles).Count) { return ([int]$n - 1) }
@@ -117,29 +155,55 @@ function Select-Profile($profiles) {
 function New-Profile($profiles) {
     $name = Ask 'Profile name'
     if (!$name) { throw 'Profile name is required.' }
-    $username = Ask 'Username'
-    if (!$username) { throw 'Username is required.' }
-    $window = Ask 'Window title (e.g. Sophos Connect; required)'
-    if (!$window) { throw 'Window title is required for safety.' }
+    $username = Ask 'Username (Enter = none)'
+    $withPassword = Confirm 'Store a password?' $true
+    if (!$username -and !$withPassword) { throw 'A profile needs a username, a password, or both.' }
+    $window = Ask 'Window title, e.g. Sophos Connect (Enter = any title)'
+    $process = Ask-Process '' 'Enter = any process'
+    if ($process -eq '-') { $process = '' }
+    if (!$window -and !$process -and !(Confirm-AnyWindow)) { throw 'Cancelled.' }
     $shortcut = Ask-Shortcut 'Alt+F1'
-    $sequence = Ask-Sequence ''
+    $sequence = Ask-Sequence '' ([bool]$username) $withPassword
     $id = [guid]::NewGuid().ToString('N')
-    Set-Password $id
-    $profile = [pscustomobject]@{ id=$id; name=$name; username=$username; window=$window; shortcut=$shortcut; sequence=$sequence; enabled=$true }
+    if ($withPassword) { Set-Password $id }
+    $profile = [pscustomobject]@{ id=$id; name=$name; username=$username; window=$window; process=$process; shortcut=$shortcut; sequence=$sequence; enabled=$true }
     return (@($profiles) + @($profile))
 }
 function Edit-Profile($profiles, [int]$index) {
     $p = $profiles[$index]
     Write-Host "`nEditing: $($p.name)"
-    Write-Host ' 1) Name'; Write-Host ' 2) Username'; Write-Host ' 3) Window title'; Write-Host ' 4) Shortcut'; Write-Host ' 5) Sequence'; Write-Host ' 6) Change password'; Write-Host ' 7) Enable/disable'; Write-Host ' 0) Back'
+    Write-Host ' 1) Name'; Write-Host ' 2) Username'; Write-Host ' 3) Window title'; Write-Host ' 4) Process'; Write-Host ' 5) Shortcut'; Write-Host ' 6) Sequence'; Write-Host ' 7) Set/change password'; Write-Host ' 8) Remove password'; Write-Host ' 9) Enable/disable'; Write-Host ' 0) Back'
     switch (Read-Host 'Choice') {
         '1' { $v=Ask 'Name' $p.name; if($v){$p.name=$v} }
-        '2' { $v=Ask 'Username' $p.username; if($v){$p.username=$v} }
-        '3' { $v=Ask 'Window title' $p.window; if($v){$p.window=$v} }
-        '4' { $p.shortcut=Ask-Shortcut (Format-Shortcut $p.shortcut) }
-        '5' { $p.sequence=Ask-Sequence $p.sequence }
-        '6' { Set-Password $p.id }
-        '7' { $p.enabled = -not $p.enabled }
+        '2' {
+            $v = Ask 'Username (- = none)' $p.username
+            if ($v -eq '-') {
+                if (!(Test-Password $p.id)) { throw 'Cannot remove the username from a profile without a password.' }
+                $p.username = ''
+            } elseif ($v) { $p.username = $v }
+        }
+        '3' {
+            $v = Ask 'Window title (- = any title)' $p.window
+            if ($v -eq '-') { if ($p.process -or (Confirm-AnyWindow)) { $p.window = '' } } elseif ($v) { $p.window = $v }
+        }
+        '4' {
+            $v = Ask-Process $p.process '- = any process'
+            if ($v -eq '-') { if ($p.window -or (Confirm-AnyWindow)) { $p.process = '' } } elseif ($v) { $p.process = $v }
+        }
+        '5' { $p.shortcut=Ask-Shortcut (Format-Shortcut $p.shortcut) }
+        '6' { $p.sequence=Ask-Sequence $p.sequence ([bool]$p.username) (Test-Password $p.id) }
+        '7' { Set-Password $p.id }
+        '8' {
+            if (!$p.username) { throw 'Cannot remove the password from a profile without a username.' }
+            if (Confirm 'Really remove the stored password?') { Remove-Password $p.id }
+        }
+        '9' { $p.enabled = -not $p.enabled }
+    }
+    $hasUser = [bool]$p.username
+    $hasPass = Test-Password $p.id
+    if (!(Validate-Sequence $p.sequence $hasUser $hasPass)) {
+        Write-Warning 'The sequence no longer matches the stored username/password; choose a new one.'
+        $p.sequence = Ask-Sequence '' $hasUser $hasPass
     }
     return $profiles
 }
@@ -150,8 +214,9 @@ function Render-Launcher($profiles) {
     )) { $lines.Add($line) }
     foreach($p in $profiles) {
         if (!$p.enabled) { continue }
-        $fields = @((Escape-Ahk $p.id),(Escape-Ahk $p.username),(Escape-Ahk $p.window),(Escape-Ahk $p.shortcut),(Escape-Ahk $p.sequence))
-        $lines.Add('profiles.Push(Map("id", ' + $fields[0] + ', "username", ' + $fields[1] + ', "window", ' + $fields[2] + ', "hotkey", ' + $fields[3] + ', "sequence", ' + $fields[4] + '))')
+        $map = [ordered]@{ id=$p.id; name=$p.name; username=$p.username; window=$p.window; process=$p.process; hotkey=$p.shortcut; sequence=$p.sequence }
+        $pairs = foreach ($k in $map.Keys) { '"' + $k + '", ' + (Escape-Ahk $map[$k]) }
+        $lines.Add('profiles.Push(Map(' + ($pairs -join ', ') + '))')
     }
     $runtime = @'
 registered := Map()
@@ -165,43 +230,61 @@ for p in profiles {
 }
 HotIf()
 
-HasMatchingProfile(hotkeyName) {
+; Profiles restricted by window title and/or process take precedence over "any window" profiles.
+FindProfiles(hotkeyName, target) {
     global profiles
-    try title := WinGetTitle("A")
+    try title := WinGetTitle(target)
     catch
-        return false
+        return []
+    proc := ""
+    try proc := WinGetProcessName(target)
+    specific := []
+    generic := []
     for p in profiles {
-        if (p["hotkey"] = hotkeyName && InStr(title, p["window"], false))
-            return true
+        if p["hotkey"] != hotkeyName
+            continue
+        if p["window"] = "" && p["process"] = ""
+            generic.Push(p)
+        else if (p["window"] = "" || InStr(title, p["window"], false)) && (p["process"] = "" || p["process"] = proc)
+            specific.Push(p)
     }
-    return false
+    return specific.Length ? specific : generic
 }
 
+HasMatchingProfile(hotkeyName) => FindProfiles(hotkeyName, "A").Length > 0
+
 HandleLogin(hotkeyName) {
-    global profiles
-    matched := []
     hwnd := WinExist("A")
     if !hwnd
         return
-    title := WinGetTitle("ahk_id " hwnd)
-    for p in profiles {
-        if (p["hotkey"] = hotkeyName && InStr(title, p["window"], false))
-            matched.Push(p)
-    }
+    matched := FindProfiles(hotkeyName, "ahk_id " hwnd)
     if matched.Length = 0
         return
-    if matched.Length > 1 {
-        MsgBox "Conflict: multiple profiles with the same shortcut match this window. Refine window titles in the manager.", "SecureHotkey"
+    if matched.Length = 1 {
+        TypeLogin(matched[1], hwnd)
         return
     }
-    p := matched[1]
-    if !WinActive("ahk_id " hwnd)
-        return
-    try {
-        password := DecryptPassword(p["id"])
-    } catch as err {
-        MsgBox "Unable to decrypt password: " err.Message "`nAt line: " err.Line, "SecureHotkey"
-        return
+    ; Numbered labels keep duplicate profile names distinct and provide keyboard accelerators.
+    picker := Menu()
+    for p in matched
+        picker.Add("&" A_Index " " StrReplace(p["name"], "&", "&&"), TypeLogin.Bind(p, hwnd))
+    picker.Show()
+}
+
+TypeLogin(p, hwnd, *) {
+    if !WinActive("ahk_id " hwnd) {
+        try WinActivate("ahk_id " hwnd)
+        if !WinWaitActive("ahk_id " hwnd, , 1)
+            return
+    }
+    password := ""
+    if InStr(p["sequence"], "{PASSWORD}") {
+        try {
+            password := DecryptPassword(p["id"])
+        } catch as err {
+            MsgBox "Unable to decrypt password: " err.Message "`nAt line: " err.Line, "SecureHotkey"
+            return
+        }
     }
     if !WinActive("ahk_id " hwnd) {
         password := ""
@@ -380,11 +463,7 @@ while ($true) {
             '3' { $idx = Select-Profile $profiles; if($idx -ge 0 -and (Confirm "Really delete $($profiles[$idx].name) including its encrypted password?")) {
                     $id=$profiles[$idx].id
                     $profiles = @($profiles | Where-Object { $_.id -ne $id })
-                    $encPath = Join-Path $Store "$id.enc"
-                    if (Test-Path -LiteralPath $encPath) {
-                        [IO.File]::WriteAllBytes($encPath, (New-Object byte[] (Get-Item -LiteralPath $encPath).Length))
-                        Remove-Item -LiteralPath $encPath
-                    }
+                    Remove-Password $id
                     $changed = $true
                 }
             }
@@ -396,8 +475,8 @@ while ($true) {
         }
         if ($changed) {
             # Prevent overlaps with same shortcut and window matcher.
-            $conflicts = @($profiles | Where-Object enabled | Group-Object { "$($_.shortcut)|$($_.window.ToLowerInvariant())" } | Where-Object Count -gt 1)
-            if ($conflicts.Count -gt 0) { Write-Warning 'Warning: some enabled profiles share a shortcut and window title. Ambiguous matches will be blocked.' }
+            $conflicts = @($profiles | Where-Object enabled | Group-Object { "$($_.shortcut)|$("$($_.window)|$($_.process)".ToLowerInvariant())" } | Where-Object Count -gt 1)
+            if ($conflicts.Count -gt 0) { Write-Warning 'Note: some enabled profiles share a shortcut and target; the launcher will show a menu to pick one.' }
             Save-Config $profiles
             Render-Launcher $profiles
             Write-Host 'Saved. Reload the launcher to apply changes.' -ForegroundColor Green

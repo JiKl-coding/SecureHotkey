@@ -11,7 +11,9 @@ SecureHotkey is a lightweight, Windows-only PowerShell tool for managing login p
 
 - 🔐 **Encrypted credentials:** Windows DPAPI via PowerShell's `ConvertFrom-SecureString`.
 - ⌨️ **Custom hotkeys:** `Alt+F1`, `Ctrl+Alt+F1`, `Ctrl+Shift+K`, and more.
-- 🪟 **Window-aware profiles:** Use the same hotkey for different applications based on window titles.
+- 🪟 **Window-aware profiles:** Use the same hotkey for different applications based on window title and/or process name, or leave both empty to match any window.
+- 📋 **Profile picker:** When several profiles match, a small menu lets you choose one (e.g. multiple accounts on one hotkey).
+- 👤 **Flexible credentials:** Store a username and password, only a username, or only a password.
 - 🧩 **Custom Auto-Type sequences:** Configure tabs, Enter presses, and delays.
 - 🛠️ **Interactive manager:** Add, edit, enable/disable, list, or delete profiles.
 - 🚀 **Windows startup integration:** Install a shortcut for the central launcher.
@@ -27,7 +29,7 @@ SecureHotkey is a lightweight, Windows-only PowerShell tool for managing login p
 
 1. Download `SecureHotkey-<version>.zip` from [Releases](../../releases) and extract it anywhere.
 2. Double-click **`SecureHotkey.cmd`** to open the interactive manager.
-3. Select **1 — Add profile** and enter your profile name, username, target window title, shortcut, typing sequence, and password (entered through a hidden prompt).
+3. Select **1 — Add profile** and enter your profile name, username (optional), whether to store a password, target window title and/or process name (both optional), shortcut, typing sequence, and password (entered through a hidden prompt).
 4. Select **5 — Install Windows startup** to install a shortcut and start the launcher, or **6 — Start / reload launcher** to start it without configuring startup.
 5. Focus the username field in the target application and press your configured hotkey.
 
@@ -50,6 +52,7 @@ To upgrade, exit the running launcher (tray icon → Exit), extract the new rele
 | Profile name | `Sophos` |
 | Username | `your-username` |
 | Window title | `Sophos Connect` |
+| Process | `SophosConnect.exe` (optional; see Task Manager → Details) |
 | Shortcut | `Alt+F1` |
 | Sequence | `{USERNAME}{TAB}{PASSWORD}{ENTER}` |
 
@@ -67,6 +70,8 @@ Choose a built-in template or define your own:
 | `{USERNAME}{TAB}{PASSWORD}` | Fill both fields without submitting |
 | `{USERNAME}{TAB 2}{DELAY 300}{PASSWORD}{ENTER}` | Extra tabs and a pause |
 
+Profiles that store only a username offer `{USERNAME}{TAB}`, `{USERNAME}{ENTER}`, and `{USERNAME}`; password-only profiles offer `{PASSWORD}{ENTER}`, `{PASSWORD}{TAB}`, and `{PASSWORD}`.
+
 Supported tokens for custom sequences:
 
 ```text
@@ -78,7 +83,7 @@ Supported tokens for custom sequences:
 {DELAY 300}    Waits 300 milliseconds (1–9999)
 ```
 
-Custom sequences must include **both** `{USERNAME}` and `{PASSWORD}`. Literal text and other tokens are not supported in this version.
+A sequence must contain `{USERNAME}` if (and only if) the profile stores a username, and `{PASSWORD}` if (and only if) it stores a password. Literal text and other tokens are not supported in this version.
 
 ## Hotkeys and window matching
 
@@ -90,7 +95,9 @@ Ctrl+Alt+F1
 Ctrl+Shift+K
 ```
 
-Window titles are matched **case-insensitively by substring**, so choose a sufficiently distinctive title. Multiple profiles can share the same hotkey if their target windows differ. If more than one profile matches the active window and shortcut, SecureHotkey blocks the action rather than guessing. In windows without a matching profile, the shortcut is not intercepted and reaches the application normally.
+Window titles are matched **case-insensitively by substring**, so choose a sufficiently distinctive title. Optionally, a profile can also require a **process name** (e.g. `SophosConnect.exe`, exact match, case-insensitive), which is much harder to spoof than a title. If both are set, both must match. Multiple profiles can share the same hotkey if their targets differ. If more than one profile matches the active window and shortcut, SecureHotkey shows a small menu to pick the profile (use the number keys or the mouse). In windows without a matching profile, the shortcut is not intercepted and reaches the application normally.
+
+A profile with an **empty window title and process** matches any window. Profiles restricted by title or process take precedence over such "any window" profiles for the same shortcut. Use this with care: the hotkey will type into whatever window is active.
 
 ## Managing profiles
 
@@ -99,7 +106,7 @@ Launch `SecureHotkey.cmd` to access:
 | Menu | Action |
 | --- | --- |
 | `1` | Add profile |
-| `2` | Edit profile (including password, window, shortcut, or sequence) |
+| `2` | Edit profile (name, username, window, process, shortcut, sequence, set/remove password, enable/disable); enter `-` to clear the username, window title, or process |
 | `3` | Delete profile and its encrypted password |
 | `4` | List profiles |
 | `5` | Install Windows startup |
@@ -139,7 +146,7 @@ SecureHotkey protects **credentials stored on disk**, but it does **not** make a
 - At login time, the launcher decrypts the password directly via `CryptUnprotectData` (no PowerShell process); it exists briefly in AutoHotkey process memory, and native buffers are zeroed after use.
 - Deleting a profile overwrites its `.enc` file with zeros before removal; on SSDs this does not guarantee physical erasure.
 - The launcher verifies the target window between sequence actions, but cannot prevent every focus-change race during a single send operation.
-- Window-title matching is not strong application identity verification; another window could present a matching title.
+- Window-title matching is not strong application identity verification; another window could present a matching title. Adding a process name helps, but a different program with the same executable name would still match. Profiles without a window title or process offer no window check at all.
 - Global shortcuts can conflict with other software. Some elevated applications and secure-desktop dialogs may not work.
 - Your organization's security policies may restrict automated sign-ins, particularly to VPN or company systems.
 
