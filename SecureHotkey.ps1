@@ -1,10 +1,7 @@
 ﻿#Requires -Version 5.1
+param([string]$Root)
 $ErrorActionPreference = 'Stop'
-$Root = 'C:\tools\SecureHotkey'
-$Store = Join-Path $Root 'credentials'
-$Config = Join-Path $Root 'profiles.json'
-$Launcher = Join-Path $Root 'launcher.ahk'
-$AhkExe = Join-Path $Root 'AutoHotkey64.exe'
+$RegKey = 'HKCU:\Software\SecureHotkey'
 $Startup = Join-Path ([Environment]::GetFolderPath('Startup')) 'SecureHotkey.lnk'
 
 function Escape-Ahk([string]$s) { return '"' + $s.Replace('`','``').Replace('"','`"').Replace("`r",'').Replace("`n",'') + '"' }
@@ -281,6 +278,35 @@ DecryptPassword(id) {
     $lines.Add($runtime)
     [IO.File]::WriteAllText($Launcher, ($lines -join "`r`n"), (New-Object Text.UTF8Encoding($true)))
 }
+function Test-WritableDir([string]$path) {
+    try {
+        New-Item -ItemType Directory -Path $path -Force | Out-Null
+        $probe = Join-Path $path ([guid]::NewGuid().ToString('N') + '.tmp')
+        [IO.File]::WriteAllText($probe, '')
+        Remove-Item -LiteralPath $probe
+        return $true
+    } catch { Write-Warning "Cannot write to ${path}: $($_.Exception.Message)"; return $false }
+}
+function Resolve-Root([string]$requested) {
+    $saved = (Get-ItemProperty -Path $RegKey -Name InstallDir -ErrorAction SilentlyContinue).InstallDir
+    $path = if ($requested) { $requested } else { $saved }
+    while ($true) {
+        if (!$path) {
+            Write-Host 'Choose the installation directory for profiles, encrypted passwords and the launcher.'
+            Write-Host "If C:\tools is not writable, use e.g. $env:LOCALAPPDATA\SecureHotkey"
+            $path = Ask 'Installation directory' 'C:\tools\SecureHotkey'
+        }
+        $path = [IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($path.Trim('"')))
+        if (Test-WritableDir $path) { break }
+        $path = ''
+    }
+    if ($path -ne $saved) {
+        if (!(Test-Path $RegKey)) { New-Item -Path $RegKey | Out-Null }
+        Set-ItemProperty -Path $RegKey -Name InstallDir -Value $path
+        if ($saved) { Write-Warning "Installation directory changed from $saved. Existing profiles were not moved." }
+    }
+    return $path
+}
 function Install-PortableAhk {
     $source = Join-Path $PSScriptRoot 'ahk'
     $exe = Join-Path $source 'AutoHotkey64.exe'
@@ -318,6 +344,11 @@ function Restart-Launcher {
     }
 }
 
+$Root = Resolve-Root $Root
+$Store = Join-Path $Root 'credentials'
+$Config = Join-Path $Root 'profiles.json'
+$Launcher = Join-Path $Root 'launcher.ahk'
+$AhkExe = Join-Path $Root 'AutoHotkey64.exe'
 New-Item -ItemType Directory -Path $Store -Force | Out-Null
 # Install the manager itself in the canonical directory for future administration.
 if ([IO.Path]::GetFullPath($PSCommandPath) -ine [IO.Path]::GetFullPath((Join-Path $Root 'manager.ps1'))) {
