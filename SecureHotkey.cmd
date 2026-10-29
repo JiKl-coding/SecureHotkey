@@ -1,4 +1,4 @@
 @echo off
-rem AutoHotkey tool (SecureHotkey.ps1). Bez menu: SecureHotkey.cmd build | run | release
+rem Starts the interactive SecureHotkey manager (SecureHotkey.ps1).
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0SecureHotkey.ps1" %*
 exit /b %errorlevel%

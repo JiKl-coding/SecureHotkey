@@ -30,6 +30,14 @@ function Confirm([string]$label, [bool]$default = $false) {
     if (!$answer) { return $default }
     return $answer -in @('y','yes')
 }
+function Format-Shortcut([string]$ahk) {
+    $names = @{ '^'='Ctrl'; '!'='Alt'; '+'='Shift'; '#'='Win' }
+    $parts = @()
+    $i = 0
+    while ($i -lt $ahk.Length - 1 -and $names.ContainsKey([string]$ahk[$i])) { $parts += $names[[string]$ahk[$i]]; $i++ }
+    $parts += $ahk.Substring($i)
+    return ($parts -join '+')
+}
 function Ask-Shortcut([string]$default) {
     while ($true) {
         Write-Host 'Shortcut format: Ctrl+Alt+F1, Alt+F1, Ctrl+Shift+K (F1-F12 or letter A-Z).'
@@ -115,7 +123,7 @@ function New-Profile($profiles) {
     if (!$username) { throw 'Username is required.' }
     $window = Ask 'Window title (e.g. Sophos Connect; required)'
     if (!$window) { throw 'Window title is required for safety.' }
-    $shortcut = Ask-Shortcut '!F1'
+    $shortcut = Ask-Shortcut 'Alt+F1'
     $sequence = Ask-Sequence ''
     $id = [guid]::NewGuid().ToString('N')
     Set-Password $id
@@ -130,7 +138,7 @@ function Edit-Profile($profiles, [int]$index) {
         '1' { $v=Ask 'Name' $p.name; if($v){$p.name=$v} }
         '2' { $v=Ask 'Username' $p.username; if($v){$p.username=$v} }
         '3' { $v=Ask 'Window title' $p.window; if($v){$p.window=$v} }
-        '4' { $p.shortcut=Ask-Shortcut $p.shortcut }
+        '4' { $p.shortcut=Ask-Shortcut (Format-Shortcut $p.shortcut) }
         '5' { $p.sequence=Ask-Sequence $p.sequence }
         '6' { Set-Password $p.id }
         '7' { $p.enabled = -not $p.enabled }
@@ -140,7 +148,7 @@ function Edit-Profile($profiles, [int]$index) {
 function Render-Launcher($profiles) {
     $lines = [Collections.Generic.List[string]]::new()
     foreach($line in @(
-        '#Requires AutoHotkey v2.0', '#SingleInstance Force', 'SetTitleMatchMode 2', 'SetKeyDelay 30, 30', 'profiles := []'
+        '#Requires AutoHotkey v2.0', '#SingleInstance Force', 'SetTitleMatchMode 2', 'profiles := []'
     )) { $lines.Add($line) }
     foreach($p in $profiles) {
         if (!$p.enabled) { continue }
@@ -149,11 +157,26 @@ function Render-Launcher($profiles) {
     }
     $runtime = @'
 registered := Map()
+; Hotkeys are active only in matching windows; elsewhere the keystroke passes through.
+HotIf(HasMatchingProfile)
 for p in profiles {
     if !registered.Has(p["hotkey"]) {
         registered[p["hotkey"]] := true
         Hotkey(p["hotkey"], HandleLogin, "On")
     }
+}
+HotIf()
+
+HasMatchingProfile(hotkeyName) {
+    global profiles
+    try title := WinGetTitle("A")
+    catch
+        return false
+    for p in profiles {
+        if (p["hotkey"] = hotkeyName && InStr(title, p["window"], false))
+            return true
+    }
+    return false
 }
 
 HandleLogin(hotkeyName) {
@@ -301,7 +324,11 @@ while ($true) {
             '3' { $idx = Select-Profile $profiles; if($idx -ge 0 -and (Confirm "Really delete $($profiles[$idx].name) including its encrypted password?")) {
                     $id=$profiles[$idx].id
                     $profiles = @($profiles | Where-Object { $_.id -ne $id })
-                    Remove-Item -LiteralPath (Join-Path $Store "$id.enc") -ErrorAction SilentlyContinue
+                    $encPath = Join-Path $Store "$id.enc"
+                    if (Test-Path -LiteralPath $encPath) {
+                        [IO.File]::WriteAllBytes($encPath, (New-Object byte[] (Get-Item -LiteralPath $encPath).Length))
+                        Remove-Item -LiteralPath $encPath
+                    }
                     $changed = $true
                 }
             }

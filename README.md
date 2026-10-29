@@ -87,7 +87,7 @@ Ctrl+Alt+F1
 Ctrl+Shift+K
 ```
 
-Window titles are matched **case-insensitively by substring**, so choose a sufficiently distinctive title. Multiple profiles can share the same hotkey if their target windows differ. If more than one profile matches the active window and shortcut, SecureHotkey blocks the action rather than guessing.
+Window titles are matched **case-insensitively by substring**, so choose a sufficiently distinctive title. Multiple profiles can share the same hotkey if their target windows differ. If more than one profile matches the active window and shortcut, SecureHotkey blocks the action rather than guessing. In windows without a matching profile, the shortcut is not intercepted and reaches the application normally.
 
 ## Managing profiles
 
@@ -111,9 +111,8 @@ Use `SecureHotkey.cmd` to start the PowerShell manager, `SecureHotkey.ps1`. The 
 
 ```text
 C:\tools\SecureHotkey\
-├── SecureHotkey.ps1  # Interactive profile manager
-├── launcher.ahk      # Single generated AutoHotkey v2 launcher
-├── decrypt.ps1       # Decrypts a credential on demand
+├── manager.ps1       # Copy of the interactive profile manager
+├── launcher.ahk      # Single generated AutoHotkey v2 launcher (decrypts on demand)
 ├── profiles.json     # Profile settings (no plaintext passwords)
 └── credentials\
     ├── <profile-id>.enc
@@ -128,7 +127,8 @@ SecureHotkey protects **credentials stored on disk**, but it does **not** make a
 
 - Passwords are encrypted using Windows DPAPI, tied to the Windows user account that created them.
 - A process running under that same Windows account can generally decrypt them too.
-- At login time, the password exists briefly in process memory and is passed from PowerShell to AutoHotkey through local standard output.
+- At login time, the launcher decrypts the password directly via `CryptUnprotectData` (no PowerShell process); it exists briefly in AutoHotkey process memory, and native buffers are zeroed after use.
+- Deleting a profile overwrites its `.enc` file with zeros before removal; on SSDs this does not guarantee physical erasure.
 - The launcher verifies the target window between sequence actions, but cannot prevent every focus-change race during a single send operation.
 - Window-title matching is not strong application identity verification; another window could present a matching title.
 - Global shortcuts can conflict with other software. Some elevated applications and secure-desktop dialogs may not work.
